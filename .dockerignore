@@ -1,0 +1,23 @@
+# RStudio / project metadata
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# Dependency and cache directories
+renv/
+packrat/
+.cache/
+
+# Temporary / OS files
+tmp/
+*.tmp
+*.swp
+.DS_Store
+
+# VCS and CI metadata not needed in image context
+.git/
+.github/
+
+# Local docs/artifacts
+artifacts/
