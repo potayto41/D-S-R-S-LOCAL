@@ -108,7 +108,6 @@ ui <- page_sidebar(
 
   # ---- Main panel: Multiple Tabs (Projects, Analytics, Dashboards, Reports) ----
   navset_tab(
-    title = "Analytics Platform",
 
     # ---- TAB 0: PROJECTS (NEW) ----
     nav_panel(
