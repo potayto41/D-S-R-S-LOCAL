@@ -1,5 +1,6 @@
 library(shiny)
 library(bslib)
+library(jsonlite)
 
 # Helper to optionally wrap outputs with spinner if shinycssloaders is available.
 with_optional_spinner <- function(ui_element) {
@@ -42,56 +43,114 @@ ui <- page_sidebar(
     card(
       card_header("Filtering"),
       uiOutput("x_filter_ui")
+    ),
+
+    card(
+      card_header("Forecasting Controls"),
+      selectInput("forecast_target", "Select target variable for forecasting", choices = NULL),
+      sliderInput("forecast_periods", "Forecast periods ahead", min = 5, max = 30, value = 10, step = 1),
+      actionButton("run_forecast", "Generate Forecast", class = "btn-success")
+    ),
+
+    card(
+      card_header("Dashboard Builder"),
+      selectInput("dashboard_component_type", "Add Component Type", 
+                  choices = c("Chart", "KPI Card", "Table", "AI Insight")),
+      textInput("dashboard_component_name", "Component Name", placeholder = "e.g., Score Trend"),
+      actionButton("add_dashboard_component", "Add to Dashboard", class = "btn-info"),
+      br(), br(),
+      selectInput("saved_dashboards", "Load Dashboard", choices = NULL),
+      actionButton("load_dashboard_btn", "Load", class = "btn-secondary"),
+      actionButton("save_dashboard_btn", "Save Current", class = "btn-warning"),
+      textInput("dashboard_name", "Dashboard Name", placeholder = "My Dashboard"),
+      actionButton("delete_dashboard_btn", "Delete Selected", class = "btn-danger")
     )
   ),
 
-  # ---- Main panel: plot, downloads, summary, preview, AI insights ----
-  layout_column_wrap(
-    width = 1,
+  # ---- Main panel: Analytics vs Dashboard tabs ----
+  navset_tab(
+    title = "Analytics & Dashboards",
 
-    card(
-      full_screen = TRUE,
-      card_header("Visualization"),
-      with_optional_spinner(plotOutput("dataPlot", height = "420px")),
-      card_footer(
-        "Legend: color = cluster, black ring = z-score anomaly, red/orange/purple overlays = clickable AI highlights, green line = regression."
-      )
-    ),
+    # ---- TAB 1: ANALYTICS (Original View) ----
+    nav_panel(
+      "Analytics",
+      layout_column_wrap(
+        width = 1,
 
-    layout_columns(
-      col_widths = c(6, 6),
-      card(
-        card_header("Downloads"),
+        card(
+          full_screen = TRUE,
+          card_header("Visualization"),
+          with_optional_spinner(plotOutput("dataPlot", height = "420px")),
+          card_footer(
+            "Legend: color = cluster, black ring = z-score anomaly, red/orange/purple overlays = clickable AI highlights, green line = regression."
+          )
+        ),
+
+        card(
+          card_header("Dataset Profile"),
+          tableOutput("datasetProfile"),
+          htmlOutput("datasetProfileText")
+        ),
+
         layout_columns(
           col_widths = c(6, 6),
-          downloadButton("download_filtered", "Download Filtered Data"),
-          downloadButton("download_plot", "Download Plot as PNG")
+          card(
+            card_header("Forecast Visualization"),
+            with_optional_spinner(plotOutput("forecastPlot", height = "400px"))
+          ),
+          card(
+            card_header("Forecast Summary"),
+            tableOutput("forecastTable"),
+            htmlOutput("forecastSummary")
+          )
+        ),
+
+        layout_columns(
+          col_widths = c(6, 6),
+          card(
+            card_header("Downloads"),
+            layout_columns(
+              col_widths = c(6, 6),
+              downloadButton("download_filtered", "Download Filtered Data"),
+              downloadButton("download_plot", "Download Plot as PNG")
+            )
+          ),
+          card(
+            card_header("Summary Statistics"),
+            tableOutput("summaryStats")
+          )
+        ),
+
+        layout_columns(
+          col_widths = c(6, 6),
+          card(
+            card_header("Table Preview (first 10 rows after filtering)"),
+            tableOutput("preview")
+          ),
+          card(
+            card_header("AI Insights"),
+            verbatimTextOutput("aiInsights"),
+            layout_columns(
+              col_widths = c(4, 4, 4),
+              actionButton("btn_corr", "Highlight Strongest Correlation"),
+              actionButton("btn_var", "Highlight Highest Variance"),
+              actionButton("btn_outlier", "Highlight Outlier Column")
+            ),
+            uiOutput("ai_highlight"),
+            plotOutput("cor_heatmap", height = "400px"),
+            downloadButton("download_report", "Download AI Report (PDF)")
+          )
         )
-      ),
-      card(
-        card_header("Summary Statistics"),
-        tableOutput("summaryStats")
       )
     ),
 
-    layout_columns(
-      col_widths = c(6, 6),
-      card(
-        card_header("Table Preview (first 10 rows after filtering)"),
-        tableOutput("preview")
-      ),
-      card(
-        card_header("AI Insights"),
-        verbatimTextOutput("aiInsights"),
-        layout_columns(
-          col_widths = c(4, 4, 4),
-          actionButton("btn_corr", "Highlight Strongest Correlation"),
-          actionButton("btn_var", "Highlight Highest Variance"),
-          actionButton("btn_outlier", "Highlight Outlier Column")
-        ),
-        uiOutput("ai_highlight"),
-        plotOutput("cor_heatmap", height = "400px"),
-        downloadButton("download_report", "Download AI Report (PDF)")
+    # ---- TAB 2: DASHBOARD (New Interactive View) ----
+    nav_panel(
+      "Dashboard",
+      layout_column_wrap(
+        width = 1,
+        uiOutput("dashboard_builder_ui"),
+        uiOutput("dashboard_grid")
       )
     )
   )
@@ -99,6 +158,461 @@ ui <- page_sidebar(
 
 server <- function(input, output, session) {
   user_message <- reactiveVal("Please enter your name, choose a number, and click Submit.")
+
+  # ---- DASHBOARD STATE MANAGEMENT ----
+  dashboard_state <- reactiveVal(list())
+  all_dashboards <- reactiveVal(list())
+  
+  # Define missing operator helper
+  `%||%` <- function(x, y) if (is.null(x)) y else x
+  
+  # Store for dashboard components (name, type, config)
+  dashboard_components <- reactiveVal(list(
+    list(id = 1, name = "Main Chart", type = "Chart", active = TRUE),
+    list(id = 2, name = "Key Metrics", type = "KPI Card", active = TRUE),
+    list(id = 3, name = "Data Table", type = "Table", active = TRUE)
+  ))
+  next_component_id <- reactiveVal(4)
+
+  # ---- KPI CALCULATION FUNCTIONS ----
+  calculate_kpis <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(list())
+    
+    numeric_cols <- names(df)[sapply(df, is.numeric)]
+    if (length(numeric_cols) == 0) return(list())
+    
+    kpis <- list()
+    
+    for (col in numeric_cols) {
+      col_data <- df[[col]]
+      col_clean <- col_data[!is.na(col_data)]
+      
+      if (length(col_clean) > 0) {
+        kpis[[col]] <- list(
+          column = col,
+          average = mean(col_clean, na.rm = TRUE),
+          median = median(col_clean, na.rm = TRUE),
+          min = min(col_clean, na.rm = TRUE),
+          max = max(col_clean, na.rm = TRUE),
+          count = length(col_clean),
+          missing = sum(is.na(col_data))
+        )
+      }
+    }
+    
+    kpis
+  }
+
+  format_kpi_value <- function(value) {
+    if (is.numeric(value)) {
+      if (abs(value) >= 1000000) {
+        return(paste0(round(value / 1000000, 2), "M"))
+      } else if (abs(value) >= 1000) {
+        return(paste0(round(value / 1000, 1), "K"))
+      } else {
+        return(format(round(value, 2), nsmall = 2))
+      }
+    }
+    return(as.character(value))
+  }
+
+  # ---- DASHBOARD COMPONENT MANAGEMENT ----
+  observeEvent(input$add_dashboard_component, {
+    req(input$dashboard_component_type, input$dashboard_component_name)
+    
+    current_components <- dashboard_components()
+    new_id <- next_component_id()
+    
+    new_component <- list(
+      id = new_id,
+      name = input$dashboard_component_name,
+      type = input$dashboard_component_type,
+      active = TRUE,
+      created_at = Sys.time()
+    )
+    
+    current_components[[new_id]] <- new_component
+    dashboard_components(current_components)
+    next_component_id(new_id + 1)
+    
+    showNotification(
+      sprintf("Component '%s' added to dashboard!", input$dashboard_component_name),
+      type = "message",
+      duration = 2
+    )
+    
+    # Clear inputs
+    updateTextInput(session, "dashboard_component_name", value = "")
+  }, ignoreInit = TRUE)
+
+  # ---- RENDER DASHBOARD GRID ----
+  output$dashboard_grid <- renderUI({
+    df <- filtered_data()
+    req(df)
+    
+    components <- dashboard_components()
+    if (length(components) == 0) {
+      return(div(
+        class = "alert alert-info",
+        "No dashboard components added yet. Use the Dashboard Builder to add charts, KPIs, tables, or insights."
+      ))
+    }
+    
+    component_outputs <- lapply(seq_along(components), function(i) {
+      comp <- components[[i]]
+      if (!comp$active) return(NULL)
+      
+      card(
+        full_screen = TRUE,
+        card_header(
+          tagList(
+            comp$name,
+            span(
+              class = "float-end",
+              actionButton(
+                paste0("remove_component_", comp$id),
+                "Remove",
+                class = "btn-sm btn-danger"
+              )
+            )
+          )
+        ),
+        if (comp$type == "Chart") {
+          with_optional_spinner(plotOutput(paste0("dashboard_chart_", comp$id), height = "400px"))
+        } else if (comp$type == "KPI Card") {
+          uiOutput(paste0("dashboard_kpi_", comp$id))
+        } else if (comp$type == "Table") {
+          with_optional_spinner(tableOutput(paste0("dashboard_table_", comp$id)))
+        } else if (comp$type == "AI Insight") {
+          verbatimTextOutput(paste0("dashboard_insight_", comp$id))
+        }
+      )
+    })
+    
+    # Render components in a flexible grid layout
+    do.call(layout_column_wrap, c(list(width = 1), component_outputs))
+  })
+
+  # ---- RENDER INDIVIDUAL DASHBOARD CHARTS ----
+  observe({
+    df <- filtered_data()
+    components <- dashboard_components()
+    
+    for (comp in components) {
+      if (comp$active && comp$type == "Chart") {
+        local({
+          chart_id <- comp$id
+          comp_name <- comp$name
+          
+          output[[paste0("dashboard_chart_", chart_id)]] <- renderPlot({
+            req(df, input$xcol, input$ycol)
+            
+            pd <- plot_data()
+            clusters <- cluster_info()$labels
+            
+            palette_cols <- c("#1f77b4", "#2ca02c", "#ff7f0e", "#9467bd", "#d62728")
+            base_col <- rep("steelblue", nrow(df))
+            cluster_idx <- !is.na(clusters)
+            if (any(cluster_idx)) {
+              base_col[cluster_idx] <- palette_cols[((clusters[cluster_idx] - 1) %% length(palette_cols)) + 1]
+            }
+            
+            plot(pd$x, pd$y, 
+                 xlab = input$xcol, ylab = input$ycol,
+                 main = comp_name,
+                 pch = 19, col = base_col, cex = 0.8)
+            
+            fit <- regression_model()
+            if (!is.null(fit)) abline(fit, col = "darkgreen", lwd = 2)
+          })
+        })
+      }
+    }
+  })
+
+  # ---- RENDER INDIVIDUAL DASHBOARD KPI CARDS ----
+  observe({
+    df <- filtered_data()
+    components <- dashboard_components()
+    kpis <- calculate_kpis(df)
+    
+    for (comp in components) {
+      if (comp$active && comp$type == "KPI Card") {
+        local({
+          kpi_id <- comp$id
+          
+          output[[paste0("dashboard_kpi_", kpi_id)]] <- renderUI({
+            if (length(kpis) == 0) {
+              return(div(
+                class = "alert alert-warning",
+                "No numeric columns available for KPI calculation."
+              ))
+            }
+            
+            # Create KPI cards for all numeric columns
+            kpi_cards <- lapply(kpis, function(kpi) {
+              div(
+                class = "kpi-card",
+                style = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; margin: 10px 0; border-radius: 8px; text-align: center;",
+                div(
+                  style = "font-size: 14px; opacity: 0.9; margin-bottom: 10px;",
+                  strong(kpi$column)
+                ),
+                div(
+                  style = "font-size: 28px; font-weight: bold; margin-bottom: 5px;",
+                  format_kpi_value(kpi$average)
+                ),
+                div(
+                  style = "font-size: 12px; opacity: 0.8;",
+                  paste("Avg | Range:", format_kpi_value(kpi$min), "-", format_kpi_value(kpi$max))
+                ),
+                div(
+                  style = "font-size: 11px; opacity: 0.7; margin-top: 8px;",
+                  paste("n =", kpi$count, "| Missing:", kpi$missing)
+                )
+              )
+            })
+            
+            do.call(tagList, kpi_cards)
+          })
+        })
+      }
+    }
+  })
+
+  # ---- RENDER INDIVIDUAL DASHBOARD TABLES ----
+  observe({
+    df <- filtered_data()
+    components <- dashboard_components()
+    
+    for (comp in components) {
+      if (comp$active && comp$type == "Table") {
+        local({
+          table_id <- comp$id
+          
+          output[[paste0("dashboard_table_", table_id)]] <- renderTable({
+            head(df, 20)
+          }, striped = TRUE, bordered = TRUE)
+        })
+      }
+    }
+  })
+
+  # ---- RENDER INDIVIDUAL DASHBOARD AI INSIGHTS ----
+  observe({
+    components <- dashboard_components()
+    
+    for (comp in components) {
+      if (comp$active && comp$type == "AI Insight") {
+        local({
+          insight_id <- comp$id
+          
+          output[[paste0("dashboard_insight_", insight_id)]] <- renderText({
+            ai_text <- ai_insights_text()
+            if (is.null(ai_text)) {
+              return("AI insights will appear here once data is loaded.")
+            }
+            ai_text
+          })
+        })
+      }
+    }
+  })
+
+  # ---- REMOVE COMPONENT HANDLERS ----
+  observe({
+    components <- dashboard_components()
+    
+    for (comp in components) {
+      observeEvent(input[[paste0("remove_component_", comp$id)]], {
+        current <- dashboard_components()
+        current[[paste0(comp$id)]] <- NULL
+        # Rebuild list without NULL entries
+        current <- Filter(function(x) !is.null(x), current)
+        dashboard_components(current)
+        showNotification("Component removed from dashboard", type = "message", duration = 2)
+      }, ignoreInit = TRUE, once = FALSE)
+    }
+  })
+
+  # ---- SAVE DASHBOARD STATE ----
+  observeEvent(input$save_dashboard_btn, {
+    req(input$dashboard_name)
+    
+    dashboard_data <- list(
+      name = input$dashboard_name,
+      created_at = Sys.time(),
+      components = dashboard_components(),
+      filters = list(
+        xcol = input$xcol,
+        ycol = input$ycol,
+        x_numeric_filter = input$x_numeric_filter %||% NULL,
+        x_categorical_filter = input$x_categorical_filter %||% NULL
+      )
+    )
+    
+    current_dashboards <- all_dashboards()
+    current_dashboards[[input$dashboard_name]] <- dashboard_data
+    all_dashboards(current_dashboards)
+    
+    # Update dropdown
+    updateSelectInput(session, "saved_dashboards", 
+                     choices = names(current_dashboards),
+                     selected = input$dashboard_name)
+    
+    showNotification(
+      sprintf("Dashboard '%s' saved successfully!", input$dashboard_name),
+      type = "message",
+      duration = 3
+    )
+  }, ignoreInit = TRUE)
+
+  # ---- LOAD DASHBOARD STATE ----
+  observeEvent(input$load_dashboard_btn, {
+    req(input$saved_dashboards)
+    
+    all_dbs <- all_dashboards()
+    dashboard_data <- all_dbs[[input$saved_dashboards]]
+    
+    if (!is.null(dashboard_data)) {
+      # Restore components
+      dashboard_components(dashboard_data$components)
+      
+      # Restore filters
+      if (!is.null(dashboard_data$filters$xcol)) {
+        updateSelectInput(session, "xcol", selected = dashboard_data$filters$xcol)
+      }
+      if (!is.null(dashboard_data$filters$ycol)) {
+        updateSelectInput(session, "ycol", selected = dashboard_data$filters$ycol)
+      }
+      
+      showNotification(
+        sprintf("Dashboard '%s' loaded!", input$saved_dashboards),
+        type = "message",
+        duration = 3
+      )
+    }
+  }, ignoreInit = TRUE)
+
+  # ---- DELETE DASHBOARD ----
+  observeEvent(input$delete_dashboard_btn, {
+    req(input$saved_dashboards)
+    
+    current_dashboards <- all_dashboards()
+    current_dashboards[[input$saved_dashboards]] <- NULL
+    current_dashboards <- Filter(function(x) !is.null(x), current_dashboards)
+    all_dashboards(current_dashboards)
+    
+    updateSelectInput(session, "saved_dashboards", 
+                     choices = names(current_dashboards),
+                     selected = if (length(current_dashboards) > 0) names(current_dashboards)[1] else "")
+    
+    showNotification("Dashboard deleted", type = "message", duration = 2)
+  }, ignoreInit = TRUE)
+
+  # ---- UPDATE SAVED DASHBOARDS DROPDOWN ----
+  observe({
+    all_dbs <- all_dashboards()
+    updateSelectInput(session, "saved_dashboards", 
+                     choices = names(all_dbs),
+                     selected = NULL)
+  })
+
+  # ---- RENDER DASHBOARD BUILDER INFO ----
+  output$dashboard_builder_ui <- renderUI({
+    components <- dashboard_components()
+    active_count <- sum(sapply(components, function(x) x$active))
+    
+    card(
+      card_header("Dashboard Information"),
+      div(
+        p(strong("Active Components:"), active_count),
+        p(strong("Total Components:"), length(components)),
+        p(strong("Saved Dashboards:"), length(all_dashboards())),
+        br(),
+        p(
+          "Use the sidebar controls to add/remove components, save/load dashboards, ",
+          "and apply filters. All dashboard components update automatically with filters."
+        )
+      )
+    )
+  })
+
+  # ---- DATASET PROFILING FUNCTIONS ----
+  profile_dataset <- function(df) {
+    if (is.null(df) || nrow(df) == 0) return(NULL)
+    
+    profile <- list(
+      rows = nrow(df),
+      cols = ncol(df),
+      col_names = names(df),
+      col_types = vapply(df, class, character(1)),
+      missing_counts = colSums(is.na(df)),
+      numeric_cols = names(df)[sapply(df, is.numeric)]
+    )
+    
+    # Calculate numeric summaries only for numeric columns
+    if (length(profile$numeric_cols) > 0) {
+      numeric_df <- df[, profile$numeric_cols, drop = FALSE]
+      profile$numeric_summary <- list(
+        means = colMeans(numeric_df, na.rm = TRUE),
+        medians = sapply(numeric_df, median, na.rm = TRUE),
+        sds = sapply(numeric_df, sd, na.rm = TRUE),
+        mins = sapply(numeric_df, min, na.rm = TRUE),
+        maxs = sapply(numeric_df, max, na.rm = TRUE)
+      )
+    }
+    
+    profile
+  }
+
+  # ---- FORECASTING FUNCTIONS ----
+  forecast_linear <- function(x, periods = 10) {
+    # Simple linear regression forecasting
+    if (is.null(x) || length(x) < 3) return(NULL)
+    
+    # Remove NAs
+    x_clean <- x[!is.na(x)]
+    if (length(x_clean) < 3) return(NULL)
+    
+    # Create time index
+    n <- length(x_clean)
+    t <- seq_len(n)
+    t_future <- seq(n + 1, n + periods)
+    
+    # Fit linear model
+    fit <- lm(y ~ x, data = data.frame(y = x_clean, x = t))
+    
+    # Predict future values
+    future_df <- data.frame(x = t_future)
+    predictions <- predict(fit, newdata = future_df)
+    
+    # Calculate confidence intervals
+    pred_se <- predict(fit, newdata = future_df, se.fit = TRUE)
+    ci_lower <- pred_se$fit - 1.96 * pred_se$se.fit
+    ci_upper <- pred_se$fit + 1.96 * pred_se$se.fit
+    
+    list(
+      observed = x_clean,
+      predicted = as.numeric(predictions),
+      ci_lower = as.numeric(ci_lower),
+      ci_upper = as.numeric(ci_upper),
+      periods = periods,
+      model = fit,
+      trend_direction = if (coef(fit)[2] > 0) "upward" else "downward",
+      trend_value = coef(fit)[2]
+    )
+  }
+
+  # ---- UPDATE FORECAST TARGET CHOICES ----
+  observe({
+    df <- data_raw()
+    req(df)
+    numeric_cols <- names(df)[sapply(df, is.numeric)]
+    if (length(numeric_cols) > 0) {
+      updateSelectInput(session, "forecast_target", choices = numeric_cols, selected = numeric_cols[1])
+    }
+  })
 
   observeEvent(input$go, {
     safe_name <- trimws(input$name)
@@ -111,6 +625,13 @@ server <- function(input, output, session) {
       return()
     }
     user_message(sprintf("Hello %s, you selected %s", safe_name, input$num))
+  }, ignoreInit = TRUE)
+
+  # ---- Forecast trigger ----
+  forecast_trigger <- reactiveVal(0)
+  observeEvent(input$run_forecast, {
+    forecast_trigger(forecast_trigger() + 1)
+    showNotification("Forecast generated successfully!", type = "message", duration = 2)
   }, ignoreInit = TRUE)
 
   # ---- data_raw(): read uploaded CSV once per upload ----
@@ -347,7 +868,7 @@ server <- function(input, output, session) {
     )
   })
 
-  # ---- ai_insights_text(): narrative + ML summaries (trend, clusters, anomalies) ----
+  # ---- ai_insights_text(): narrative + ML summaries (trend, clusters, anomalies, forecasts) ----
   ai_insights_text <- reactive({
     insights <- ai_insights_raw()
     if (is.null(insights)) return(NULL)
@@ -406,6 +927,29 @@ server <- function(input, output, session) {
       paste("Z-score anomalies (|z| > 2):", paste(paste0(names(flagged), " (", as.integer(flagged), ")"), collapse = ", "), ".")
     }
 
+    # FORECASTING INSIGHT (NEW)
+    forecast_text <- if (is.null(input$forecast_target) || isolate(forecast_trigger()) == 0) {
+      "Forecast: Not yet generated. Provide target variable and click 'Generate Forecast' to enable time-series predictions."
+    } else {
+      forecast <- forecast_results()
+      if (is.null(forecast)) {
+        "Forecast: Could not generate forecast for selected target. Required at least 3 valid observations."
+      } else {
+        avg_pred <- mean(forecast$predicted, na.rm = TRUE)
+        min_pred <- min(forecast$predicted, na.rm = TRUE)
+        max_pred <- max(forecast$predicted, na.rm = TRUE)
+        trend_direction <- forecast$trend_direction
+        trend_rate <- round(forecast$trend_value, 4)
+        
+        paste0(
+          "Forecast Insight: ", input$forecast_target, " is trending ", trend_direction, 
+          " (rate: ", trend_rate, " per period). ",
+          "Predicted average value in next period: ", round(avg_pred, 2), ". ",
+          "Expected range: ", round(min_pred, 2), " to ", round(max_pred, 2), "."
+        )
+      }
+    }
+
     paste(
       relationship_text,
       variability_text,
@@ -414,6 +958,7 @@ server <- function(input, output, session) {
       trend_text,
       cluster_txt,
       z_text,
+      forecast_text,
       sep = "\n\n"
     )
   })
@@ -813,6 +1358,151 @@ server <- function(input, output, session) {
     )
   })
 
+  # ---- REACTIVE: Dataset Profile ----
+  dataset_profile_obj <- reactive({
+    df <- filtered_data()
+    req(df)
+    profile_dataset(df)
+  })
+
+  # ---- REACTIVE: Forecast Results ----
+  forecast_results <- eventReactive(forecast_trigger(), {
+    df <- filtered_data()
+    req(input$forecast_target, df)
+    validate(need(input$forecast_target %in% names(df), "Selected forecast target does not exist."))
+    
+    target_data <- df[[input$forecast_target]]
+    forecast_linear(target_data, periods = input$forecast_periods)
+  })
+
+  # ---- OUTPUT: Dataset Profile Table ----
+  output$datasetProfile <- renderTable({
+    profile <- dataset_profile_obj()
+    req(profile)
+    
+    data.frame(
+      Metric = c("Rows", "Columns", "Numeric Columns"),
+      Value = c(profile$rows, profile$cols, length(profile$numeric_cols))
+    )
+  }, striped = TRUE, bordered = TRUE)
+
+  # ---- OUTPUT: Dataset Profile Text (Missing Values + Column Types) ----
+  output$datasetProfileText <- renderUI({
+    profile <- dataset_profile_obj()
+    req(profile)
+    
+    # Missing values summary
+    missing_summary <- profile$missing_counts
+    missing_text <- if (sum(missing_summary) == 0) {
+      "<strong>Missing Values:</strong> None detected"
+    } else {
+      cols_with_missing <- names(missing_summary[missing_summary > 0])
+      missing_str <- paste(paste0(cols_with_missing, ": ", missing_summary[cols_with_missing]), collapse = "<br/>")
+      paste0("<strong>Missing Values:</strong><br/>", missing_str)
+    }
+    
+    # Column types summary
+    types_table <- data.frame(table(profile$col_types))
+    types_text <- paste0(
+      "<strong>Column Types:</strong><br/>",
+      paste(paste0(types_table$Var1, ": ", types_table$Freq), collapse = "<br/>")
+    )
+    
+    # Numeric summary if available
+    numeric_text <- ""
+    if (!is.null(profile$numeric_summary)) {
+      numeric_text <- "<strong><br/>Numeric Summary (Mean ± SD):</strong><br/>"
+      for (col in profile$numeric_cols) {
+        mean_val <- round(profile$numeric_summary$means[col], 3)
+        sd_val <- round(profile$numeric_summary$sds[col], 3)
+        min_val <- round(profile$numeric_summary$mins[col], 3)
+        max_val <- round(profile$numeric_summary$maxs[col], 3)
+        numeric_text <- paste0(numeric_text, 
+                               col, ": µ=", mean_val, " ± ", sd_val, 
+                               " [", min_val, " to ", max_val, "]<br/>")
+      }
+    }
+    
+    HTML(paste0(missing_text, "<br/><br/>", types_text, numeric_text))
+  })
+
+  # ---- OUTPUT: Forecast Plot ----
+  output$forecastPlot <- renderPlot({
+    forecast <- forecast_results()
+    req(forecast)
+    
+    n_obs <- length(forecast$observed)
+    n_pred <- length(forecast$predicted)
+    
+    # Create x-axis values
+    x_obs <- seq_len(n_obs)
+    x_pred <- seq(n_obs + 1, n_obs + n_pred)
+    
+    # Plot observed data
+    plot(x_obs, forecast$observed, 
+         type = "l", col = "steelblue", lwd = 2,
+         xlim = c(1, n_obs + n_pred),
+         ylim = c(min(forecast$ci_lower, forecast$observed, na.rm = TRUE),
+                  max(forecast$ci_upper, forecast$observed, na.rm = TRUE)),
+         xlab = "Time Period", ylab = input$forecast_target,
+         main = paste("Forecast of", input$forecast_target))
+    
+    # Add observed points
+    points(x_obs, forecast$observed, col = "steelblue", pch = 19, cex = 0.8)
+    
+    # Add predicted line
+    lines(x_pred, forecast$predicted, col = "darkred", lwd = 2, lty = 2)
+    points(x_pred, forecast$predicted, col = "darkred", pch = 19, cex = 0.8)
+    
+    # Add confidence interval
+    polygon(c(x_pred, rev(x_pred)), 
+            c(forecast$ci_upper, rev(forecast$ci_lower)),
+            col = rgb(1, 0, 0, 0.15), border = NA)
+    
+    # Add legend
+    legend("topleft", 
+           legend = c("Observed", "Predicted", "95% CI"),
+           col = c("steelblue", "darkred", rgb(1, 0, 0, 0.3)),
+           lwd = c(2, 2, 10),
+           lty = c(1, 2, 1))
+    
+    # Add reference line at transition point
+    abline(v = n_obs + 0.5, col = "gray", lty = 3, lwd = 1)
+  })
+
+  # ---- OUTPUT: Forecast Table ----
+  output$forecastTable <- renderTable({
+    forecast <- forecast_results()
+    req(forecast)
+    
+    data.frame(
+      Period = seq_len(length(forecast$predicted)),
+      Predicted = round(forecast$predicted, 3),
+      Lower_CI = round(forecast$ci_lower, 3),
+      Upper_CI = round(forecast$ci_upper, 3)
+    )
+  }, striped = TRUE, bordered = TRUE)
+
+  # ---- OUTPUT: Forecast Summary Text ----
+  output$forecastSummary <- renderUI({
+    forecast <- forecast_results()
+    req(forecast)
+    
+    avg_pred <- mean(forecast$predicted, na.rm = TRUE)
+    min_pred <- min(forecast$predicted, na.rm = TRUE)
+    max_pred <- max(forecast$predicted, na.rm = TRUE)
+    
+    trend_emoji <- if (forecast$trend_direction == "upward") "📈" else "📉"
+    
+    HTML(paste0(
+      "<strong>Forecast Summary</strong><br/>",
+      "Trend: ", forecast$trend_direction, " ", trend_emoji, "<br/>",
+      "Average predicted value: ", round(avg_pred, 3), "<br/>",
+      "Predicted range: ", round(min_pred, 3), " to ", round(max_pred, 3), "<br/>",
+      "Trend rate: ", round(forecast$trend_value, 4), " per period"
+    ))
+  })
+
   output$message <- renderText({ user_message() })
   output$preview <- renderTable({ head(filtered_data(), 10) })
 
@@ -963,6 +1653,8 @@ server <- function(input, output, session) {
       var_result <- variance_insight()
       outlier_result <- outlier_insight()
       health <- dataset_health()
+      profile <- dataset_profile_obj()
+      forecast <- forecast_results()
 
       correlation_text <- if (is.null(corr_insight)) "No reliable strongest relationship could be determined." else corr_insight$interpretation
       variance_text <- if (is.null(var_result)) "No numeric columns were available to assess variability." else var_result$interpretation
@@ -990,6 +1682,11 @@ server <- function(input, output, session) {
       add_line("DATASET OVERVIEW", 1.3, TRUE)
       add_line(paste("Rows:", nrow(df)))
       add_line(paste("Columns:", ncol(df)))
+      if (!is.null(profile)) {
+        add_line(paste("Numeric Columns:", length(profile$numeric_cols)))
+        missing_total <- sum(profile$missing_counts)
+        add_line(paste("Missing Values (Total):", missing_total))
+      }
       add_line(" ")
 
       add_line("CORRELATION INTELLIGENCE", 1.3, TRUE)
@@ -1007,6 +1704,23 @@ server <- function(input, output, session) {
       add_line("DATASET HEALTH SCORE", 1.3, TRUE)
       add_line(paste("Score:", health_score, "/ 100"))
       add_line(health_comment)
+      add_line(" ")
+
+      # NEW: FORECASTING SECTION
+      if (!is.null(forecast)) {
+        add_line("TIME-SERIES FORECASTING", 1.3, TRUE)
+        add_line(paste("Target Variable:", input$forecast_target))
+        add_line(paste("Trend Direction:", forecast$trend_direction))
+        add_line(paste("Trend Rate:", round(forecast$trend_value, 4), "per period"))
+        avg_pred <- mean(forecast$predicted, na.rm = TRUE)
+        min_pred <- min(forecast$predicted, na.rm = TRUE)
+        max_pred <- max(forecast$predicted, na.rm = TRUE)
+        add_line(paste("Predicted Average:", round(avg_pred, 2)))
+        add_line(paste("Predicted Range:", round(min_pred, 2), "to", round(max_pred, 2)))
+        add_line(" ")
+      }
+
+      add_line("END OF REPORT", 1.2, TRUE)
     }
   )
 

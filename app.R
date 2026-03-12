@@ -75,7 +75,11 @@ ui <- page_sidebar(
     ),
 
     layout_columns(
-      col_widths = c(6, 6),
+      col_widths = c(4, 4, 4),
+      card(
+        card_header("Dataset Profile"),
+        verbatimTextOutput("dataProfile")
+      ),
       card(
         card_header("Table Preview (first 10 rows after filtering)"),
         tableOutput("preview")
@@ -93,6 +97,13 @@ ui <- page_sidebar(
         plotOutput("cor_heatmap", height = "400px"),
         downloadButton("download_report", "Download AI Report (PDF)")
       )
+    ),
+    layout_columns(
+        card(
+            card_header("Forecasting"),
+            selectInput("forecast_target_col", "Select column to forecast", choices = NULL),
+            plotOutput("forecastPlot")
+        )
     )
   )
 )
@@ -799,6 +810,70 @@ server <- function(input, output, session) {
     interpreted <- interpret_health_score(health$total_score)
 
     c(health, interpreted)
+  })
+
+  data_profile_text <- reactive({
+    df <- data_raw()
+    req(df)
+
+    # Basic dimensions
+    profile <- paste(
+      "Rows:", nrow(df),
+      "Columns:", ncol(df),
+      "\n"
+    )
+
+    # Missing values
+    missing_vals <- colSums(is.na(df))
+    missing_vals <- missing_vals[missing_vals > 0]
+    if (length(missing_vals) > 0) {
+      profile <- paste(profile, "Missing Values:\n")
+      for (col_name in names(missing_vals)) {
+        profile <- paste(profile, paste0("  ", col_name, ": ", missing_vals[col_name], "\n"))
+      }
+    } else {
+      profile <- paste(profile, "No missing values found.\n")
+    }
+
+    # Column types
+    profile <- paste(profile, "\nColumn Data Types:\n")
+    for (col_name in names(df)) {
+      profile <- paste(profile, paste0("  ", col_name, ": ", class(df[[col_name]]), "\n"))
+    }
+
+    # Numeric summary
+    numeric_cols <- names(df)[sapply(df, is.numeric)]
+    if (length(numeric_cols) > 0) {
+      profile <- paste(profile, "\nNumeric Summary:\n")
+      for (col_name in numeric_cols) {
+        summary_stats <- summary(df[[col_name]])
+        profile <- paste(profile, paste0("  ", col_name, ":\n"))
+        profile <- paste(profile, paste0("    Mean: ", round(mean(df[[col_name]], na.rm = TRUE), 2), "\n"))
+        profile <- paste(profile, paste0("    Median: ", round(median(df[[col_name]], na.rm = TRUE), 2), "\n"))
+        profile <- paste(profile, paste0("    Std Dev: ", round(sd(df[[col_name]], na.rm = TRUE), 2), "\n"))
+        profile <- paste(profile, paste0("    Min: ", round(min(df[[col_name]], na.rm = TRUE), 2), "\n"))
+        profile <- paste(profile, paste0("    Max: ", round(max(df[[col_name]], na.rm = TRUE), 2), "\n"))
+      }
+    }
+
+    # Categorical frequency
+    categorical_cols <- names(df)[sapply(df, function(x) is.character(x) || is.factor(x))]
+    if (length(categorical_cols) > 0) {
+      profile <- paste(profile, "\nCategorical Frequency (Top 5):\n")
+      for (col_name in categorical_cols) {
+        profile <- paste(profile, paste0("  ", col_name, ":\n"))
+        freq_table <- sort(table(df[[col_name]]), decreasing = TRUE)
+        for (i in 1:min(5, length(freq_table))) {
+          profile <- paste(profile, paste0("    ", names(freq_table)[i], ": ", freq_table[i], "\n"))
+        }
+      }
+    }
+
+    profile
+  })
+
+  output$dataProfile <- renderPrint({
+    cat(data_profile_text())
   })
 
   summary_stats <- reactive({
