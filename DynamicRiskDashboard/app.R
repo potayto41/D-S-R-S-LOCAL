@@ -3,6 +3,10 @@ library(bslib)
 library(jsonlite)
 library(httr)  # For Google Sheets API
 
+# Ensure app uses Shiny validation helpers even though jsonlite exports `validate`.
+validate <- shiny::validate
+need <- shiny::need
+
 # Helper to optionally wrap outputs with spinner if shinycssloaders is available.
 with_optional_spinner <- function(ui_element) {
   if (requireNamespace("shinycssloaders", quietly = TRUE)) {
@@ -792,23 +796,23 @@ server <- function(input, output, session) {
     req(input$file1)
 
     if (!grepl("\\.csv$", tolower(input$file1$name))) {
-      validate(need(FALSE, "Invalid file type: please upload a .csv file."))
+      shiny::validate(shiny::need(FALSE, "Invalid file type: please upload a .csv file."))
     }
 
     if (is.null(input$file1$size) || input$file1$size >= 5 * 1024 * 1024) {
       showNotification("File is too large. Please upload a CSV smaller than 5 MB.", type = "warning", duration = 4)
-      validate(need(FALSE, "File is too large. Please upload a CSV smaller than 5 MB."))
+      shiny::validate(shiny::need(FALSE, "File is too large. Please upload a CSV smaller than 5 MB."))
     }
 
-    withProgress(message = "Loading CSV file...", value = 0, {
-      incProgress(0.25)
-      df <- tryCatch(
-        read.csv(input$file1$datapath, stringsAsFactors = FALSE),
-        error = function(e) validate(need(FALSE, paste("Unable to read CSV:", conditionMessage(e))))
-      )
-      incProgress(0.75)
-      df
-    })
+    df <- tryCatch(
+      read.csv(input$file1$datapath, stringsAsFactors = FALSE),
+      error = function(e) {
+        showNotification(paste("Unable to read CSV:", conditionMessage(e)), type = "error", duration = 5)
+        NULL
+      }
+    )
+    req(!is.null(df))
+    df
   })
 
   observeEvent(input$file1, {
