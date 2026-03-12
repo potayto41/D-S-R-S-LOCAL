@@ -24,6 +24,26 @@ A comprehensive Shiny web application with AI-powered analytics, interactive das
 - **Save/Load Dashboards**: Persist dashboard layouts and filter settings for reuse
 - **Responsive Layout**: Dynamic grid layout that adapts to screen size
 
+### AI Decision Intelligence Layer (NEW)
+- **Automatic Insight Ranking**: Top 5 insights ranked by statistical significance
+  - Strongest correlations with impact scores
+  - Largest variances and spreads
+  - Anomalies and outlier patterns
+  - Cluster distributions and segments
+  - Trend analysis and forecasts
+- **Automated Risk Detection**: Real-time warning system
+  - High anomaly rate alerts
+  - Cluster imbalance warnings
+  - Rapid trend detection (downward/upward)
+  - Data quality health warnings
+  - Missing data threshold alerts
+- **AI-Generated Recommendations**: Actionable suggestions
+  - Relationship optimization
+  - Targeted interventions
+  - Trend reversal strategies
+  - Anomaly protocols
+  - Monitoring dashboards
+
 ### Reports & Exports
 - Interactive plots with zoom and pan
 - Filtered data CSV export
@@ -64,12 +84,25 @@ docker run --rm -e PORT=3838 -p 3838:3838 dynamic-risk-simulator
 Original analytics features including visualizations, clustering, anomaly detection, and AI insights.
 
 **Key Sections**:
-- Visualization with filtering
-- Dataset Profile
-- Forecast Visualization
-- Summary Statistics
-- AI Insights Panel
-- Download options (CSV, PNG, PDF)
+- **Visualization**: Interactive plot with filtering, clustering, anomalies, and regression
+- **Dataset Profile**: Data types, rows, columns, missing values analysis
+- **Forecast Visualization**: Time-series forecasts and trend analysis
+- **TOP 5 RANKED INSIGHTS**: Automatically ranked insights by importance (NEW)
+  - Correlations, variances, anomalies, clusters, and trends
+  - Scored and sorted by statistical significance
+  - Executive summaries for each insight
+- **DETECTED RISKS & WARNINGS**: Real-time risk alerts (NEW)
+  - High anomaly rates, cluster imbalances, trend warnings
+  - Severity levels (Critical, High, Medium, Low)
+  - Specific recommended actions
+- **AI RECOMMENDATIONS**: AI-generated suggestions (NEW)
+  - Relationship optimization strategies
+  - Targeted interventions
+  - Data quality improvements
+- **Summary Statistics**: Table of descriptive statistics
+- **Table Preview**: First 10 filtered rows
+- **AI Insights**: Detailed narrative analysis
+- **Download Options**: CSV, PNG, PDF reports
 
 ### Tab 2: Dashboard (New)
 
@@ -250,13 +283,24 @@ Rscript app.R
 ## Documentation
 
 ### User Guides
-- **[DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md)** - Complete dashboard usage tutorial
-- **[README.md](README.md)** - This file
+- **[DASHBOARD_GUIDE.md](DASHBOARD_GUIDE.md)** - Complete dashboard usage tutorial and examples
+- **[INTELLIGENCE_LAYER.md](INTELLIGENCE_LAYER.md)** - AI Decision Intelligence system (NEW)
+  - Top 5 insight ranking explained
+  - Risk detection and warning system
+  - AI-generated recommendations
+  - PDF report structure
+- **[README.md](README.md)** - This file (getting started)
 - **[IMPLEMENTATION_NOTES.md](IMPLEMENTATION_NOTES.md)** - Forecasting & profiling details
 
 ### Technical Documentation
-- **[DASHBOARD_TECHNICAL.md](DASHBOARD_TECHNICAL.md)** - Architecture and development guide
+- **[DASHBOARD_TECHNICAL.md](DASHBOARD_TECHNICAL.md)** - Dashboard architecture guide
 - Inline code comments in `DynamicRiskDashboard/app.R`
+
+### For AI Intelligence Features (NEW)
+- Automatic insight ranking using statistical metrics
+- Risk thresholds and severity levels
+- Recommendation generation logic
+- See [INTELLIGENCE_LAYER.md](INTELLIGENCE_LAYER.md) for full details
 
 ## Troubleshooting
 

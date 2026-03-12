@@ -121,6 +121,24 @@ ui <- page_sidebar(
           )
         ),
 
+        card(
+          full_screen = TRUE,
+          card_header("🎯 TOP 5 RANKED INSIGHTS", class = "bg-info text-white"),
+          uiOutput("top_insights_ui")
+        ),
+
+        card(
+          full_screen = TRUE,
+          card_header("🚨 DETECTED RISKS & WARNINGS", class = "bg-danger text-white"),
+          uiOutput("risks_ui")
+        ),
+
+        card(
+          full_screen = TRUE,
+          card_header("💡 AI RECOMMENDATIONS", class = "bg-success text-white"),
+          uiOutput("recommendations_ui")
+        ),
+
         layout_columns(
           col_widths = c(6, 6),
           card(
@@ -866,6 +884,343 @@ server <- function(input, output, session) {
       highest_variance_column = highest_variance_column,
       outlier_counts = outlier_counts
     )
+  })
+
+  # ---- TOP 5 AUTOMATICALLY RANKED INSIGHTS ENGINE ----
+  top_insights_ranked <- reactive({
+    df <- filtered_data()
+    if (is.null(df) || nrow(df) < 3) return(list())
+    
+    insights_list <- list()
+    
+    # 1. CORRELATION INSIGHT
+    corr_insight <- strongest_correlation_insight()
+    if (!is.null(corr_insight)) {
+      score <- abs(corr_insight$r) * 100
+      insights_list$correlation <- list(
+        rank = 1,
+        title = paste0(corr_insight$var1, " ↔ ", corr_insight$var2, " (r=", format(round(corr_insight$r, 2), nsmall=2), ")"),
+        description = corr_insight$interpretation,
+        score = score,
+        category = "Relationship",
+        icon = "📊"
+      )
+    }
+    
+    # 2. VARIANCE INSIGHT
+    var_insight <- variance_insight()
+    if (!is.null(var_insight)) {
+      score <- if (var_insight$level == "high") 85 else if (var_insight$level == "moderate") 60 else 40
+      insights_list$variance <- list(
+        rank = 2,
+        title = paste0("High Variability Detected: ", highest_variance()),
+        description = var_insight$interpretation,
+        score = score,
+        category = "Spread",
+        icon = "📈"
+      )
+    }
+    
+    # 3. ANOMALY INSIGHT
+    z_scores <- anomaly_zscore()
+    anomaly_count <- sum(z_scores$counts)
+    anomaly_pct <- if (nrow(df) > 0) (anomaly_count / nrow(df)) * 100 else 0
+    
+    if (anomaly_count > 0) {
+      score <- min(95, anomaly_pct * 5)
+      insights_list$anomalies <- list(
+        rank = 3,
+        title = paste0("Anomalies Detected: ", anomaly_count, " outliers (", round(anomaly_pct, 1), "%)"),
+        description = paste0("Found ", anomaly_count, " data points with unusual z-score values (|z| > 2). These represent ", 
+                            round(anomaly_pct, 1), "% of the dataset and warrant investigation."),
+        score = score,
+        category = "Outliers",
+        icon = "⚠️"
+      )
+    }
+    
+    # 4. CLUSTER INSIGHT
+    cluster_info_data <- cluster_info()
+    if (!is.null(cluster_info_data$labels) && length(unique(na.omit(cluster_info_data$labels))) > 1) {
+      cluster_labels <- cluster_info_data$labels
+      cluster_counts <- table(cluster_labels[!is.na(cluster_labels)])
+      max_cluster_size <- max(cluster_counts)
+      min_cluster_size <- min(cluster_counts)
+      size_ratio <- max_cluster_size / min_cluster_size
+      
+      score <- if (size_ratio > 3) 80 else 70
+      insights_list$clusters <- list(
+        rank = 4,
+        title = paste0("Cluster Distribution: ", length(cluster_counts), " groups identified"),
+        description = paste0("K-means analysis revealed ", length(cluster_counts), " distinct clusters. ",
+                            "Largest cluster: ", max_cluster_size, " observations, Smallest: ", min_cluster_size, ". ",
+                            "Size ratio (max/min): ", round(size_ratio, 2), " suggests ", 
+                            if (size_ratio > 3) "highly imbalanced segments." else "relatively balanced segments."),
+        score = score,
+        category = "Segments",
+        icon = "🎯"
+      )
+    }
+    
+    # 5. FORECAST TREND INSIGHT
+    forecast <- forecast_results()
+    if (!is.null(forecast) && !is.null(forecast$trend_value)) {
+      trend_magnitude <- abs(forecast$trend_value)
+      score <- min(90, trend_magnitude * 20)
+      
+      trend_emoji <- if (forecast$trend_direction == "upward") "📈" else if (forecast$trend_direction == "downward") "📉" else "➡️"
+      
+      insights_list$forecast <- list(
+        rank = 5,
+        title = paste0("Trend Alert (", forecast$trend_direction, "): ", input$forecast_target),
+        description = paste0(input$forecast_target, " is trending ", forecast$trend_direction, " at a rate of ", 
+                            round(forecast$trend_value, 4), " per period. ",
+                            "This suggests ", 
+                            if (forecast$trend_direction == "downward") "declining performance - monitor closely." 
+                            else "improving performance - strong trajectory ahead."),
+        score = score,
+        category = "Trend",
+        icon = trend_emoji
+      )
+    }
+    
+    # Sort by score (descending) and return top 5
+    insights_list <- insights_list[order(-sapply(insights_list, function(x) x$score))]
+    names(insights_list) <- NULL
+    
+    # Add rank numbers
+    for (i in seq_along(insights_list)) {
+      insights_list[[i]]$rank <- i
+    }
+    
+    insights_list[1:min(5, length(insights_list))]
+  })
+  
+  # ---- AUTOMATED RISK DETECTION ENGINE ----
+  detected_risks <- reactive({
+    df <- filtered_data()
+    if (is.null(df) || nrow(df) < 3) return(list())
+    
+    risks <- list()
+    
+    # RISK 1: Anomaly Threshold
+    z_scores <- anomaly_zscore()
+    anomaly_count <- sum(z_scores$counts)
+    anomaly_pct <- if (nrow(df) > 0) (anomaly_count / nrow(df)) * 100 else 0
+    
+    if (anomaly_pct > 10) {
+      risks[[length(risks) + 1]] <- list(
+        severity = "HIGH",
+        title = "High Anomaly Rate Detected",
+        description = paste0("Dataset contains ", round(anomaly_pct, 1), "% anomalous observations. ",
+                            "This exceeds 10% threshold and may indicate data quality issues or significant business events."),
+        icon = "🚨",
+        action = "Review outliers for data entry errors or genuine business anomalies"
+      )
+    } else if (anomaly_pct > 5) {
+      risks[[length(risks) + 1]] <- list(
+        severity = "MEDIUM",
+        title = "Moderate Anomaly Rate",
+        description = paste0("Dataset contains ", round(anomaly_pct, 1), "% anomalous observations. ",
+                            "Consider investigating these outliers."),
+        icon = "⚠️",
+        action = "Investigate outliers for patterns or causes"
+      )
+    }
+    
+    # RISK 2: Cluster Imbalance
+    cluster_info_data <- cluster_info()
+    if (!is.null(cluster_info_data$labels)) {
+      cluster_counts <- table(cluster_info_data$labels[!is.na(cluster_info_data$labels)])
+      if (length(cluster_counts) > 1) {
+        max_cluster_size <- max(cluster_counts)
+        min_cluster_size <- min(cluster_counts)
+        size_ratio <- max_cluster_size / min_cluster_size
+        
+        if (size_ratio > 5) {
+          risks[[length(risks) + 1]] <- list(
+            severity = "HIGH",
+            title = "High-Risk Cluster Imbalance",
+            description = paste0("Cluster sizes vary dramatically (ratio: ", round(size_ratio, 2), ":1). ",
+                                "Smallest cluster has only ", min_cluster_size, " members. ",
+                                "This may represent a small high-risk segment requiring special attention."),
+            icon = "🎯",
+            action = "Focus intervention efforts on smallest cluster"
+          )
+        }
+      }
+    }
+    
+    # RISK 3: Downward Trend
+    forecast <- forecast_results()
+    if (!is.null(forecast) && forecast$trend_direction == "downward") {
+      trend_magnitude <- abs(forecast$trend_value)
+      if (trend_magnitude > 0.5) {
+        risks[[length(risks) + 1]] <- list(
+          severity = "CRITICAL",
+          title = "Rapid Downward Trend Detected",
+          description = paste0("Strong downward trend observed (rate: ", round(trend_magnitude, 4), " per period). ",
+                              "Immediate intervention may be needed to reverse the trajectory."),
+          icon = "📉",
+          action = "Investigate root causes and implement corrective actions immediately"
+        )
+      } else if (trend_magnitude > 0.1) {
+        risks[[length(risks) + 1]] <- list(
+          severity = "MEDIUM",
+          title = "Downward Trend Identified",
+          description = paste0("Moderate downward trend (rate: ", round(trend_magnitude, 4), " per period). ",
+                              "Monitor closely for acceleration."),
+          icon = "📉",
+          action = "Monitor trend closely and prepare contingency plans"
+        )
+      }
+    }
+    
+    # RISK 4: Low Dataset Health
+    health <- dataset_health()
+    if (!is.null(health) && health$total_score < 50) {
+      risks[[length(risks) + 1]] <- list(
+        severity = "HIGH",
+        title = "Poor Dataset Health Score",
+        description = paste0("Overall health score is ", health$total_score, "/100 (", health$level, "). ",
+                            "Data quality is poor and may limit analytical reliability."),
+        icon = "💔",
+        action = "Improve data quality: address missing values and inconsistencies"
+      )
+    }
+    
+    # RISK 5: High Missing Data
+    if (!is.null(df)) {
+      missing_pct <- (sum(is.na(df)) / (nrow(df) * ncol(df))) * 100
+      if (missing_pct > 20) {
+        risks[[length(risks) + 1]] <- list(
+          severity = "HIGH",
+          title = paste0("Excessive Missing Data (", round(missing_pct, 1), "%)"),
+          description = paste0(round(missing_pct, 1), "% of data is missing. ",
+                              "This exceeds 20% threshold and may compromise analysis reliability."),
+          icon = "🔴",
+          action = "Investigate data collection process and implement validation rules"
+        )
+      }
+    }
+    
+    risks
+  })
+  
+  # ---- AI-GENERATED RECOMMENDATIONS ENGINE ----
+  recommendations_list <- reactive({
+    df <- filtered_data()
+    if (is.null(df) || nrow(df) < 3) return(list())
+    
+    recommendations <- list()
+    
+    # Get existing insights for context
+    insights <- top_insights_ranked()
+    risks <- detected_risks()
+    cluster_info_data <- cluster_info()
+    forecast <- forecast_results()
+    corr_insight <- strongest_correlation_insight()
+    
+    # RECOMMENDATION 1: Based on correlation
+    if (!is.null(corr_insight) && corr_insight$strength == "strong") {
+      var1 <- corr_insight$var1
+      var2 <- corr_insight$var2
+      
+      if (corr_insight$direction == "positive") {
+        recommendations[[length(recommendations) + 1]] <- list(
+          priority = "P1",
+          title = paste0("Maximize ", var1, " to Improve ", var2),
+          description = paste0("Strong positive correlation (r=", format(round(corr_insight$r, 2), nsmall=2), ") found between ",
+                              var1, " and ", var2, ". A focus on increasing ", var1, " should yield improvements in ", var2, "."),
+          icon = "💡",
+          impact = "High"
+        )
+      } else {
+        recommendations[[length(recommendations) + 1]] <- list(
+          priority = "P1",
+          title = paste0("Monitor Trade-off: ", var1, " vs ", var2),
+          description = paste0("Strong negative correlation (r=", format(round(corr_insight$r, 2), nsmall=2), ") exists. ",
+                              "Optimize the balance between ", var1, " and ", var2, " based on business priorities."),
+          icon = "⚖️",
+          impact = "High"
+        )
+      }
+    }
+    
+    # RECOMMENDATION 2: Based on clusters
+    if (!is.null(cluster_info_data$labels)) {
+      cluster_counts <- table(cluster_info_data$labels[!is.na(cluster_info_data$labels)])
+      if (length(cluster_counts) > 1) {
+        smallest_cluster <- which.min(cluster_counts)
+        recommendations[[length(recommendations) + 1]] <- list(
+          priority = "P2",
+          title = paste0("Targeted Intervention for Cluster ", smallest_cluster),
+          description = paste0("Cluster ", smallest_cluster, " is significantly smaller (", min(cluster_counts), 
+                              " members) and may represent a high-risk or high-value segment. ",
+                              "Implement targeted strategies and close monitoring for this group."),
+          icon = "🎯",
+          impact = "Medium"
+        )
+      }
+    }
+    
+    # RECOMMENDATION 3: Based on downward trend
+    if (!is.null(forecast) && forecast$trend_direction == "downward") {
+      target_var <- input$forecast_target
+      recommendations[[length(recommendations) + 1]] <- list(
+        priority = "P1",
+        title = paste0("Urgent: Stabilize ", target_var),
+        description = paste0("Downward trend detected in ", target_var, ". ",
+                            "Analyze root causes immediately and implement corrective measures. ",
+                            "Consider: reduced external factors, internal process issues, or market changes."),
+        icon = "🚨",
+        impact = "Critical"
+      )
+    }
+    
+    # RECOMMENDATION 4: Based on anomalies
+    z_scores <- anomaly_zscore()
+    anomaly_count <- sum(z_scores$counts)
+    if (anomaly_count > 5) {
+      recommendations[[length(recommendations) + 1]] <- list(
+        priority = "P2",
+        title = "Establish Anomaly Detection Protocol",
+        description = paste0("With ", anomaly_count, " anomalies detected, establish automated monitoring and alerts. ",
+                            "Create a standard process for reviewing and categorizing unusual observations."),
+        icon = "🔍",
+        impact = "Medium"
+      )
+    }
+    
+    # RECOMMENDATION 5: General optimization
+    recommendations[[length(recommendations) + 1]] <- list(
+      priority = "P3",
+      title = "Implement Continuous Monitoring Dashboard",
+      description = "Use the dashboard feature to track key metrics in real-time. Set up regular alerts for threshold violations and anomalies.",
+      icon = "📊",
+      impact = "Medium"
+    )
+    
+    # RECOMMENDATION 6: Data quality
+    if (!is.null(df)) {
+      missing_pct <- (sum(is.na(df)) / (nrow(df) * ncol(df))) * 100
+      if (missing_pct > 5) {
+        recommendations[[length(recommendations) + 1]] <- list(
+          priority = "P2",
+          title = "Improve Data Quality and Completeness",
+          description = paste0("Currently ", round(missing_pct, 1), "% of data is missing. ",
+                              "Implement validation rules at data entry, perform audits, and establish data governance standards."),
+          icon = "✓",
+          impact = "High"
+        )
+      }
+    }
+    
+    # Sort by priority
+    priority_order <- list(P1 = 1, P2 = 2, P3 = 3)
+    recommendations <- recommendations[order(sapply(recommendations, function(x) priority_order[[x$priority]]))]
+    
+    recommendations[1:min(5, length(recommendations))]
   })
 
   # ---- ai_insights_text(): narrative + ML summaries (trend, clusters, anomalies, forecasts) ----
@@ -1643,6 +1998,102 @@ server <- function(input, output, session) {
 
   })
 
+  # ---- RENDER TOP 5 INSIGHTS UI ----
+  output$top_insights_ui <- renderUI({
+    insights <- top_insights_ranked()
+    if (length(insights) == 0) {
+      return(div(class="alert alert-info", "Insufficient data to generate insights. Upload more data or adjust filters."))
+    }
+
+    insight_cards <- lapply(insights, function(insight) {
+      div(
+        class = "insight-card",
+        style = "margin-bottom: 15px; padding: 12px; border-left: 4px solid #007bff; background-color: #f8f9fa; border-radius: 4px;",
+        div(
+          style = "display: flex; justify-content: space-between; align-items: top;",
+          div(
+            h5(style = "margin: 0; color: #333;", 
+               HTML(paste0(insight$icon, " #", insight$rank, ": ", insight$title))),
+            p(style = "margin: 8px 0 0 0; color: #666; font-size: 0.95em;", insight$description),
+            p(style = "margin: 5px 0 0 0; font-size: 0.85em; color: #999;",
+              span(class = "badge bg-primary", insight$category), " | ",
+              span(class = "badge bg-secondary", paste0("Score: ", round(insight$score, 0))))
+          )
+        )
+      )
+    })
+
+    do.call(div, c(insight_cards, list(style = "padding: 10px;")))
+  })
+
+  # ---- RENDER DETECTED RISKS UI ----
+  output$risks_ui <- renderUI({
+    risks <- detected_risks()
+    if (length(risks) == 0) {
+      return(div(class="alert alert-success", "✓ No major risks detected. Dataset appears healthy."))
+    }
+
+    risk_cards <- lapply(risks, function(risk) {
+      severity_color <- switch(risk$severity,
+        "CRITICAL" = "#dc3545",
+        "HIGH" = "#fd7e14",
+        "MEDIUM" = "#ffc107",
+        "LOW" = "#28a745",
+        "#6c757d"
+      )
+
+      div(
+        class = "risk-card",
+        style = paste0("margin-bottom: 15px; padding: 12px; border-left: 4px solid ", severity_color, 
+                      "; background-color: #f8f9fa; border-radius: 4px;"),
+        div(
+          h5(style = "margin: 0; color: #333;", 
+             HTML(paste0(risk$icon, " ", risk$title))),
+          p(style = "margin: 8px 0 0 0; color: #666; font-size: 0.95em;", risk$description),
+          p(style = "margin: 8px 0 0 0; color: #555; font-weight: 500; font-style: italic;",
+            "→ ", risk$action),
+          p(style = "margin: 5px 0 0 0; font-size: 0.85em; color: #999;",
+            span(class = paste0("badge bg-", tolower(risk$severity)), risk$severity))
+        )
+      )
+    })
+
+    do.call(div, c(risk_cards, list(style = "padding: 10px;")))
+  })
+
+  # ---- RENDER RECOMMENDATIONS UI ----
+  output$recommendations_ui <- renderUI({
+    recommendations <- recommendations_list()
+    if (length(recommendations) == 0) {
+      return(div(class="alert alert-info", "Recommendations will appear as insights are generated."))
+    }
+
+    rec_cards <- lapply(recommendations, function(rec) {
+      priority_color <- switch(rec$priority,
+        "P1" = "#dc3545",
+        "P2" = "#fd7e14",
+        "P3" = "#28a745",
+        "#6c757d"
+      )
+
+      div(
+        class = "recommendation-card",
+        style = paste0("margin-bottom: 15px; padding: 12px; border-left: 4px solid ", priority_color,
+                      "; background-color: #f8f9fa; border-radius: 4px;"),
+        div(
+          h5(style = "margin: 0; color: #333;",
+             HTML(paste0(rec$icon, " ", rec$title))),
+          p(style = "margin: 8px 0 0 0; color: #666; font-size: 0.95em;", rec$description),
+          p(style = "margin: 5px 0 0 0; font-size: 0.85em; color: #999;",
+            span(class = "badge bg-primary", rec$priority), " | ",
+            span(class = "badge bg-info", paste0("Impact: ", rec$impact)))
+        )
+      )
+    })
+
+    do.call(div, c(rec_cards, list(style = "padding: 10px;")))
+  })
+
   output$download_report <- downloadHandler(
     filename = function() {
       paste("AI_Insight_Report_", Sys.Date(), ".pdf", sep = "")
@@ -1717,6 +2168,54 @@ server <- function(input, output, session) {
         max_pred <- max(forecast$predicted, na.rm = TRUE)
         add_line(paste("Predicted Average:", round(avg_pred, 2)))
         add_line(paste("Predicted Range:", round(min_pred, 2), "to", round(max_pred, 2)))
+        add_line(" ")
+      }
+
+      # NEW: TOP 5 INSIGHTS SECTION
+      add_line("TOP 5 RANKED INSIGHTS", 1.3, TRUE)
+      insights <- top_insights_ranked()
+      if (length(insights) > 0) {
+        for (i in seq_along(insights)) {
+          insight <- insights[[i]]
+          add_line(paste0(i, ". ", insight$icon, " ", insight$title), 1.1, TRUE)
+          add_line(insight$description)
+          add_line(paste("Category:", insight$category, "| Score:", round(insight$score, 0)))
+          add_line(" ")
+        }
+      } else {
+        add_line("Insufficient data to generate ranked insights.")
+        add_line(" ")
+      }
+
+      # NEW: DETECTED RISKS & WARNINGS SECTION
+      add_line("DETECTED RISKS & WARNINGS", 1.3, TRUE)
+      risks <- detected_risks()
+      if (length(risks) > 0) {
+        for (i in seq_along(risks)) {
+          risk <- risks[[i]]
+          add_line(paste0(risk$icon, " [", risk$severity, "] ", risk$title), 1.1, TRUE)
+          add_line(risk$description)
+          add_line(paste("Action:", risk$action))
+          add_line(" ")
+        }
+      } else {
+        add_line("No major risks detected. Dataset appears stable and healthy.")
+        add_line(" ")
+      }
+
+      # NEW: AI RECOMMENDATIONS SECTION
+      add_line("AI-GENERATED RECOMMENDATIONS", 1.3, TRUE)
+      recommendations <- recommendations_list()
+      if (length(recommendations) > 0) {
+        for (i in seq_along(recommendations)) {
+          rec <- recommendations[[i]]
+          add_line(paste0(rec$icon, " [", rec$priority, "] ", rec$title), 1.1, TRUE)
+          add_line(rec$description)
+          add_line(paste("Impact:", rec$impact))
+          add_line(" ")
+        }
+      } else {
+        add_line("Recommendations will be generated once insights are available.")
         add_line(" ")
       }
 
