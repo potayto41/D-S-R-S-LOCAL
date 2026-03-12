@@ -36,7 +36,7 @@ Successfully implemented a comprehensive **AI Decision Intelligence Layer** that
 **Example Output**:
 ```
 1. 📊 Study Hours ↔ Score (r=0.71)
-   Strong positive relationship. As study hours increase, 
+   Strong positive relationship. As study hours increase,
    test scores improve proportionally.
    Category: Relationship | Score: 71
 ```

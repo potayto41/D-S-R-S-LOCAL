@@ -68,7 +68,7 @@ Displays a scatter plot of your selected X and Y columns.
 - Component title shown at the top
 - Responds to all filtering changes
 
-**Example**: 
+**Example**:
 ```
 Chart: "Age vs Score"
 - Shows relationship between Age (X) and Score (Y)
@@ -129,10 +129,10 @@ Displays AI-generated statistical insights about your data.
 ```
 AI Insights:
 
-Strongest Relationship Insight: Age and Score show a moderate positive 
+Strongest Relationship Insight: Age and Score show a moderate positive
 relationship (r = 0.456). As Age increases, Score tends to increase.
 
-Variability Insight: Score exhibits high variability within the dataset. 
+Variability Insight: Score exhibits high variability within the dataset.
 This indicates a wide distribution of values...
 
 Dataset Health Score: 78 / 100 (Good)
@@ -266,7 +266,7 @@ Each dashboard component renders:
 ### Dashboard Won't Load
 
 **Problem**: Saved dashboard doesn't load
-**Solution**: 
+**Solution**:
 - Ensure file hasn't been closed
 - Reopen and re-select the dashboard
 - Dashboards are session-specific; refresh browser may clear them
@@ -379,7 +379,7 @@ all_dashboards = list(
 3. Table: "Top 20 Sales Records"
 4. AI Insight: "Sales Analysis"
 
-**Filters**: 
+**Filters**:
 - Region = North America
 - Time Period = Last 30 days
 - Product > $1000

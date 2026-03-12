@@ -167,11 +167,11 @@ server <- function(input, output, session) {
   dashboard_state <- reactiveVal(...)
   all_dashboards <- reactiveVal(...)
   dashboard_components <- reactiveVal(...)
-  
+
   # 2. KPI Functions (lines 149-300)
   calculate_kpis()
   format_kpi_value()
-  
+
   # 3. Component Management (lines 293-380)
   observeEvent(add_component)
   observe(render_grid)
@@ -180,13 +180,13 @@ server <- function(input, output, session) {
   observe(render_tables)
   observe(render_insights)
   observe(remove_components)
-  
+
   # 4. Save/Load Operations (lines 440-530)
   observeEvent(save_dashboard_btn)
   observeEvent(load_dashboard_btn)
   observeEvent(delete_dashboard_btn)
   observe(update_dashboard_dropdown)
-  
+
   # 5. Dashboard Info (lines 535-550)
   output$dashboard_builder_ui <- renderUI(...)
 }

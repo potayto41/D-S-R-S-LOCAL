@@ -4,8 +4,8 @@
 
 The **AI Decision Intelligence Layer** is an advanced analytics system that automatically generates **actionable insights, detects risks, and recommends decisions** from your data. It transforms raw analytics into strategic intelligence by analyzing relationships, patterns, and trends across your dataset.
 
-**Status**: ✅ Production-Ready  
-**Coverage**: Automatic analysis of correlations, variances, anomalies, clusters, and forecasts  
+**Status**: ✅ Production-Ready
+**Coverage**: Automatic analysis of correlations, variances, anomalies, clusters, and forecasts
 **Output**: Interactive UI cards + Comprehensive PDF reports
 
 ---
@@ -52,7 +52,7 @@ Analyzes your dataset holistically and ranks the **Top 5 most important insights
 ### UI Display
 - **Card Title**: "🎯 TOP 5 RANKED INSIGHTS"
 - **Card Color**: Blue header (info)
-- **Layout**: 
+- **Layout**:
   - Insight number and title with icon
   - Detailed explanation in plain English
   - Category badge + numerical score
@@ -71,7 +71,7 @@ Continuously monitors your dataset for **dangerous patterns and warning signs** 
 ```
 Detected: > 10% anomalous observations
 Action: Review outliers for data entry errors or business events
-Example: "Dataset contains 15% anomalous observations. 
+Example: "Dataset contains 15% anomalous observations.
          Exceeds 10% threshold - investigate immediately."
 ```
 
@@ -140,7 +140,7 @@ Translates detected insights and risks into **specific, actionable recommendatio
 Insight Trigger: Strong correlation detected
 Output: "Maximize Study Hours to Improve Score"
 Details: "Strong positive correlation (r=0.71) found.
-          Focus on increasing study hours from current 4 to target 5+ 
+          Focus on increasing study hours from current 4 to target 5+
           should yield measurable score improvements."
 Priority: P1 | Impact: High
 ```
@@ -288,7 +288,7 @@ recommendations_list()
 
 #### Health Score Calculation
 ```
-Total Score = Correlation Score (25) 
+Total Score = Correlation Score (25)
             + Outlier Stability (25)
             + Variance Balance (25)
             + Missing Data Quality (25)
@@ -477,7 +477,7 @@ To extend with domain-specific insights:
 ```r
 top_insights_ranked <- reactive({
   # ... existing insights ...
-  
+
   # ADD YOUR CUSTOM INSIGHT HERE
   custom_insights <- list(
     title = "Your Custom Insight Title",
@@ -486,7 +486,7 @@ top_insights_ranked <- reactive({
     category = "Custom",
     icon = "🔍"
   )
-  
+
   insights_list$custom <- custom_insights
 })
 ```

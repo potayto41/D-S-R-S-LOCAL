@@ -307,7 +307,7 @@ Rscript app.R
 ### Dashboard Components Not Updating
 
 **Problem**: Dashboard elements don't refresh after filtering
-**Solution**: 
+**Solution**:
 - Check that component is marked as "Active" (has Remove button)
 - Verify filter values are actually set
 - Try removing and re-adding component
